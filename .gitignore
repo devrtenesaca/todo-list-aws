@@ -5,3 +5,15 @@ tests
 pyenvunittests
 .coverage
 coverage.xml
+# Reportes de Jenkins
+*.out
+*.xml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# AWS SAM
+.aws-sam/

@@ -66,7 +66,7 @@ pipeline {
             }
         }
     
-       stage('GetOutputs') {
+       stage('Unit Testing') {
             steps {
                 echo "stage: obteniendo outputs"
                 script {
@@ -76,20 +76,12 @@ pipeline {
                     // Asignamos a una variable de entorno de Jenkins
                     env.BASE_URL = apiUrl
                     echo "La URL de la API capturada es: ${env.BASE_URL}"
+                    sh "python3 -m pytest -v test/integration/todoApiTest.py --junitxml=result-api.xml"
                 }
             }
         }  
         
-        stage('Unit-Testing Deploy') {
-            steps {
-                echo "stage: ejecutando pruebas unitarias"
-                sh '''
-                    export BASE_URL=${BASE_URL}
-                    python3 -m pytest -v test/integration/todoApiTest.py --junitxml=result-api.xml
-                '''
-                
-            }
-        }
+
         
         stage ('Results'){
             steps {
@@ -98,27 +90,56 @@ pipeline {
             }
         }
         
-        stage('Auto Merge') {
+        stage('Merge') {
             when {
                 expression { currentBuild.currentResult == 'SUCCESS' }
             }
         
             steps {
-                sh '''
-                    git config user.email "rteneasca@opensip.tech"
-                    git config user.name "devrtenesaca"
-                    git config merge.ours.driver true
-                    
-                    git checkout master
-                    git pull origin master
-                    
-                    git merge origin/develop --no-commit --no-ff 
-                    git checkout HEAD -- Jenkinsfile
-                    git commit -m "Auto merge develop -> master (Pipeline protegido)" || echo "No hay cambios para commitear"
-                    git push origin master
-                '''
+                withCredentials([usernamePassword(credentialsId: 'github-token-prush', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                    script {
+                        sh '''
+                            # 1. Configuración de identidad
+                            git config user.email "rteneasca@opensip.tech"
+                            git config user.name "devrtenesaca"
+
+                            # 2. Sincronización y Limpieza forzada
+                            git fetch origin
+                            git checkout master
+                            git reset --hard origin/master
+
+                            # 3. Intentar el Merge
+                            echo "Iniciando merge de develop..."
+                            # El '|| true' permite que el script siga aunque haya conflictos
+                            git merge origin/develop --no-commit --no-ff || echo "Conflictos detectados, resolviendo..."
+
+                            # 4. RESOLUCIÓN DE CONFLICTO (EL TRUCO)
+                            # Este comando le dice a Git: "Para el Jenkinsfile, usa la versión que tiene MASTER (HEAD)"
+                            git checkout HEAD -- Jenkinsfile
+                            
+                            # Agregamos el Jenkinsfile resuelto al index
+                            git add Jenkinsfile
+
+                            # 5. COMMIT Y PUSH
+                            # Verificamos si hay algo que fusionar después de resolver el conflicto
+                            if [ -n "$(git status --porcelain)" ]; then
+                                git commit -m "Auto merge develop -> master (Pipeline protegido de conflictos)"
+                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/devrtenesaca/todo-list-aws.git master
+                            else
+                                echo "No hay cambios nuevos que subir."
+                            fi
+                        '''
+                    }
+                }
             }
         }
     
+    }
+    post {
+        always {
+            echo "Limpiando el workspace y carpetas temporales..."
+            // Borra el workspace y las carpetas con sufijo @tmp
+            cleanWs deleteDirs: true
+        }
     }
 }

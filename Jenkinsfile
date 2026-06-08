@@ -105,7 +105,7 @@ pipeline {
                             git config user.name "devrtenesaca"
 
                             # 2. Sincronización y Limpieza forzada
-                            git fetch origin
+                            git fetch origin master
                             git checkout -f master
                             git reset --hard origin/master
 

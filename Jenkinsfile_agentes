@@ -4,15 +4,20 @@ pipeline {
     stages {
         stage('GetCode') {
             steps {
+                sh 'whoami'
+                sh 'hostname'
                 echo "Workspace directory is: ${WORKSPACE}"
                 echo 'Getting code'
                 git branch: 'master', url: 'https://github.com/devrtenesaca/todo-list-aws.git'
+                stash name: 'source-code', includes: '**'
             }
         }
         
         
         stage('Build') {
             steps {
+                sh 'whoami'
+                sh 'hostname'
                 script {
                     echo "stage:  build infraestructura"
                     sh "ls -la"
@@ -23,6 +28,8 @@ pipeline {
 
         stage('Deploy') {
             steps {
+                sh 'whoami'
+                sh 'hostname'
                 echo "stage: deployando infraestructura"
                     sh """
                     sam deploy \
@@ -35,9 +42,14 @@ pipeline {
         }
     
        stage('Unit Testing') {
+            agent { label 'agent01'}
             steps {
+                sh 'whoami'
+                sh 'hostname'
                 echo "stage: obteniendo outputs"
+                
                 script {
+                    unstash 'source-code'
                     def apiUrl = sh(
                         script: "aws cloudformation describe-stacks --stack-name todo-list-aws-production --query 'Stacks[0].Outputs[?OutputKey==`BaseUrlApi`].OutputValue' --region us-east-1 --output text",
                         returnStdout: true ).trim()
@@ -56,7 +68,10 @@ pipeline {
         
 
         stage ('Results'){
+            agent { label 'agent01'}
             steps {
+                sh 'whoami'
+                sh 'hostname'
                 echo "stage: visualizando resultados"
                 junit 'result*.xml'
             }

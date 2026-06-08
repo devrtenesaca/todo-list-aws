@@ -1,0 +1,168 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('GetCode') {
+            steps {
+                sh 'whoami'
+                sh 'hostname'
+                echo "Workspace directory is: ${WORKSPACE}"
+                echo 'Getting code'
+                git branch: 'develop', url: 'https://github.com/devrtenesaca/todo-list-aws.git'
+                stash name: 'source-code', includes: '**'
+            }
+        }
+        
+        stage ('Static Test'){
+            parallel {
+                stage('Static Linting') {
+                    agent { label 'agent02' }
+                    steps {
+                        unstash 'source-code'
+                        sh 'whoami'
+                        sh 'hostname'
+                        sh 'flake8 --exit-zero --format=pylint src > flake8.out'
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                                recordIssues(
+                                    tools: [pyLint(name: 'Flake8-StaticReport', pattern: 'flake8.out')],
+                                    qualityGates: [
+                                        [threshold: 8, type: 'TOTAL', unstable: true],
+                                        [threshold: 10, type: 'TOTAL', unstable: false]
+                                    ]
+                                )
+                        }
+                    }
+                }
+                
+                stage('Security Test') {
+                    agent { label 'agent02' }
+                    steps {
+                        unstash 'source-code'
+                        sh 'whoami'
+                        sh 'hostname'
+                        sh '''
+                            bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                        '''
+                        recordIssues(
+                            tools: [pyLint(id: 'bandit', name: 'Bandit Security', pattern: 'bandit.out')]
+                        )
+                    }
+                }
+                
+            }
+        }
+        
+        
+        stage('Build') {
+            steps {
+                script {
+                    sh 'whoami'
+                    sh 'hostname'
+                    echo "stage:  build infraestructura"
+                    sh "ls -la"
+                    sh "sam build"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "stage: deployando infraestructura"
+                    sh 'whoami'
+                    sh 'hostname'
+                    sh """
+                    sam deploy \
+                        --config-env staging \
+                        --resolve-s3 \
+                        --no-confirm-changeset \
+                        --no-fail-on-empty-changeset
+                    """
+            }
+        }
+    
+       stage('Unit Testing') {
+           agent { label 'agent01' }
+            steps {
+                echo "stage: obteniendo outputs"
+                script {
+                    unstash 'source-code'
+                    sh 'whoami'
+                    sh 'hostname'
+                    def apiUrl = sh(
+                        script: "aws cloudformation describe-stacks --stack-name todo-list-aws-staging --query 'Stacks[0].Outputs[?OutputKey==`BaseUrlApi`].OutputValue' --region us-east-1 --output text",
+                        returnStdout: true ).trim()
+                    // Asignamos a una variable de entorno de Jenkins
+                    env.BASE_URL = apiUrl
+                    echo "La URL de la API capturada es: ${env.BASE_URL}"
+                    sh "python3 -m pytest -v test/integration/todoApiTest.py --junitxml=result-api.xml"
+                }
+            }
+        }  
+        
+
+        
+        stage ('Results'){
+            agent { label 'agent01' }
+            steps {
+                sh 'whoami'
+                sh 'hostname'
+                echo "stage: visualizando resultados"
+                junit 'result*.xml'
+            }
+        }
+        
+        stage('Merge') {
+            when {
+                expression { currentBuild.currentResult == 'SUCCESS' }
+            }
+        
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-token-prush', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                    script {
+                        sh 'whoami'
+                        sh 'hostname'
+                        sh '''
+                            # 1. Configuración de identidad
+                            git config user.email "rteneasca@opensip.tech"
+                            git config user.name "devrtenesaca"
+
+                            # 2. Sincronización y Limpieza forzada
+                            git fetch origin
+                            git checkout master
+                            git reset --hard origin/master
+
+                            # 3. Intentar el Merge
+                            echo "Iniciando merge de develop..."
+                            # El '|| true' permite que el script siga aunque haya conflictos
+                            git merge origin/develop --no-commit --no-ff || echo "Conflictos detectados, resolviendo..."
+
+                            # 4. RESOLUCIÓN DE CONFLICTO (EL TRUCO)
+                            # Este comando le dice a Git: "Para el Jenkinsfile, usa la versión que tiene MASTER (HEAD)"
+                            git checkout HEAD -- Jenkinsfile
+                            
+                            # Agregamos el Jenkinsfile resuelto al index
+                            git add Jenkinsfile
+
+                            # 5. COMMIT Y PUSH
+                            # Verificamos si hay algo que fusionar después de resolver el conflicto
+                            if [ -n "$(git status --porcelain)" ]; then
+                                git commit -m "Auto merge develop -> master (Pipeline protegido de conflictos)"
+                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/devrtenesaca/todo-list-aws.git master
+                            else
+                                echo "No hay cambios nuevos que subir."
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+    
+    }
+    post {
+        always {
+            echo "Limpiando el workspace y carpetas temporales..."
+            // Borra el workspace y las carpetas con sufijo @tmp
+            cleanWs deleteDirs: true
+        }
+    }
+}

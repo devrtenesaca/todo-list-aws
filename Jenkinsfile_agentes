@@ -9,6 +9,7 @@ pipeline {
                 echo "Workspace directory is: ${WORKSPACE}"
                 echo 'Getting code'
                 git branch: 'develop', url: 'https://github.com/devrtenesaca/todo-list-aws.git'
+                sh 'curl -L https://raw.githubusercontent.com/devrtenesaca/-todo-list-aws-config/refs/heads/staging/samconfig.toml -o samconfig.toml'
                 stash name: 'source-code', includes: '**'
             }
         }
@@ -128,7 +129,7 @@ pipeline {
 
                             # 2. Sincronización y Limpieza forzada
                             git fetch origin
-                            git checkout master
+                            git checkout -f master
                             git reset --hard origin/master
 
                             # 3. Intentar el Merge
@@ -138,7 +139,9 @@ pipeline {
 
                             # 4. RESOLUCIÓN DE CONFLICTO (EL TRUCO)
                             # Este comando le dice a Git: "Para el Jenkinsfile, usa la versión que tiene MASTER (HEAD)"
-                            git checkout HEAD -- Jenkinsfile
+                            git checkout HEAD -- Jenkinsfile || echo "Jenkinsfile no estaba en master, se usará el de develop"
+                            git checkout HEAD -- Jenkinsfile_agentes || echo "Jenkinsfile_agentes no estaba en master, se usará el de develop"
+                            git checkout HEAD -- samconfig.toml || echo "samconfig.toml no existe en master"
                             
                             # Agregamos el Jenkinsfile resuelto al index
                             git add Jenkinsfile
